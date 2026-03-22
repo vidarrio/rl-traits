@@ -84,6 +84,37 @@ of steps (emitting `Truncated`, not `Terminated`):
 let env = TimeLimit::new(MyEnv, 500);
 ```
 
+## Multi-agent environments
+
+Two APIs are available, mirroring PettingZoo's split:
+
+**`ParallelEnvironment`** — all agents act simultaneously each step. The
+natural fit for cooperative and competitive tasks, and for Bevy since a single
+system call produces results for all agents at once.
+
+**`AecEnvironment`** — agents act one at a time (Agent Environment Cycle).
+Use this for turn-based domains like board games and card games.
+
+Both APIs share the `possible_agents` / `agents` distinction: `possible_agents`
+is the fixed universe of all agent IDs; `agents` is the live subset for the
+current episode, shrinking as agents terminate mid-episode.
+
+```rust
+// Parallel: step with joint actions, get per-agent results
+let actions = env.agents().iter()
+    .map(|id| (id.clone(), env.sample_action(id, &mut rng)))
+    .collect();
+let results = env.step(actions);  // HashMap<AgentId, StepResult<…>>
+
+// AEC: read current agent, act or cycle out if done
+let (obs, _reward, status, _info) = env.last();
+let action = if status.is_done() { None } else { Some(policy(obs.unwrap())) };
+env.step(action);
+```
+
+Bevy `Entity` satisfies all `AgentId` bounds directly, so agents can be ECS
+entities without any extra indirection.
+
 ## Reference example
 
 `examples/cartpole.rs` implements CartPole-v1 against these traits. It serves

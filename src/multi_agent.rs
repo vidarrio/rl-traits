@@ -5,55 +5,72 @@ use rand::Rng;
 
 use crate::episode::{EpisodeStatus, StepResult};
 
-// ── Parallel API ─────────────────────────────────────────────────────────────
-
 /// A multi-agent environment where all agents act simultaneously each step.
 ///
-/// Mirrors the semantics of PettingZoo's [Parallel API], adapted for Rust's
-/// type system and Bevy ECS compatibility.
+/// Mirrors the semantics of PettingZoo's Parallel API, adapted for Rust's
+/// type system. Use this when all agents observe and act at every step —
+/// cooperative navigation, competitive games, mixed-team tasks.
 ///
-/// [Parallel API]: https://pettingzoo.farama.org/api/parallel/
+/// # Design principles
 ///
-/// # Homogeneous agents
+/// - **`possible_agents` vs `agents`**: `possible_agents()` is the fixed
+///   universe of all agent IDs. `agents()` is the live subset for the current
+///   episode. After `reset()`, `agents == possible_agents`. Agents are removed
+///   from `agents` when their episode ends; the episode is over when `agents`
+///   is empty.
 ///
-/// All agents share the same `Observation`, `Action`, and `Info` types. This
-/// covers the majority of MARL scenarios (cooperative navigation, competitive
-/// games, mixed-team tasks). Heterogeneous agents — where different agent types
-/// have structurally different spaces — can be modelled by making `Observation`
-/// and `Action` enums that wrap the per-type variants.
+/// - **Joint step**: `step()` takes exactly one action per agent in `agents()`
+///   and returns one [`StepResult`] per active agent. Providing actions for
+///   terminated agents or omitting active agents is undefined behaviour.
 ///
-/// # Bevy compatibility
+/// - **Homogeneous agents**: all agents share `Observation`, `Action`, and
+///   `Info` types. Heterogeneous agents can be modelled with enum wrappers
+///   over the per-type variants.
 ///
-/// Like [`crate::Environment`], all associated types carry `Send + Sync +
-/// 'static` bounds. `AgentId: Eq + Hash` enables `HashMap`-keyed per-agent
-/// data. Bevy `Entity` satisfies all `AgentId` bounds directly.
+/// - **Bevy-compatible by design**: `AgentId: Eq + Hash + Send + Sync +
+///   'static` means Bevy `Entity` is a valid agent ID directly, enabling
+///   free ECS-based parallelisation across agents in bevy-gym.
 ///
-/// # `possible_agents` vs `agents`
+/// - **No `render()`**: visualisation is bevy-gym's concern.
 ///
-/// `possible_agents()` is the fixed universe of all agent IDs the environment
-/// could ever use. `agents()` is the live subset currently in the episode.
-/// After `reset()`, `agents == possible_agents`. As agents terminate or are
-/// truncated, they are removed from `agents`. The episode ends when `agents`
-/// is empty.
+/// - **No `close()`**: implement `Drop` if your environment holds resources.
 ///
-/// # Step contract
+/// # Example
 ///
-/// `step()` must receive exactly one action per agent currently in `agents()`.
-/// Providing actions for terminated agents or omitting active agents is
-/// undefined behaviour. The returned map contains one [`StepResult`] per
-/// active agent; agents whose result is done are removed from `agents` before
-/// the next call.
+/// ```rust
+/// use std::collections::HashMap;
+/// use rl_traits::{ParallelEnvironment, StepResult, EpisodeStatus};
+/// use rand::Rng;
 ///
-/// # Example loop
+/// struct CoopGame {
+///     active: Vec<usize>,
+/// }
 ///
-/// ```rust,ignore
-/// env.reset(None);
-/// while !env.is_done() {
-///     let actions = env.agents().iter()
-///         .map(|id| (id.clone(), policy.act(id, &obs[id])))
-///         .collect();
-///     let results = env.step(actions);
-///     // inspect results, store experience, update obs…
+/// impl ParallelEnvironment for CoopGame {
+///     type AgentId = usize;
+///     type Observation = f32;
+///     type Action = bool;   // cooperate or defect
+///     type Info = ();
+///
+///     fn possible_agents(&self) -> &[usize] { &[0, 1] }
+///     fn agents(&self) -> &[usize] { &self.active }
+///
+///     fn step(&mut self, _actions: HashMap<usize, bool>)
+///         -> HashMap<usize, StepResult<f32, ()>>
+///     {
+///         self.active.iter()
+///             .map(|&id| (id, StepResult::new(0.0_f32, 1.0, EpisodeStatus::Continuing, ())))
+///             .collect()
+///     }
+///
+///     fn reset(&mut self, _seed: Option<u64>) -> HashMap<usize, (f32, ())> {
+///         self.active = vec![0, 1];
+///         self.active.iter().map(|&id| (id, (0.0_f32, ()))).collect()
+///     }
+///
+///     fn sample_action(&self, _agent: &usize, rng: &mut impl Rng) -> bool {
+///         rng.gen()
+///     }
 /// }
 /// ```
 pub trait ParallelEnvironment {
@@ -63,41 +80,45 @@ pub trait ParallelEnvironment {
     /// `Entity` for direct ECS integration without an extra lookup.
     type AgentId: Eq + Hash + Clone + Send + Sync + 'static;
 
-    /// Observation type, shared across all agents.
+    /// The observation type produced by `step()` and `reset()`.
+    ///
+    /// `Send + Sync + 'static` are required for Bevy ECS compatibility.
     type Observation: Clone + Send + Sync + 'static;
 
-    /// Action type, shared across all agents.
+    /// The action type consumed by `step()`.
     type Action: Clone + Send + Sync + 'static;
 
-    /// Auxiliary info type, shared across all agents.
+    /// Auxiliary information returned alongside observations.
+    ///
+    /// Use `()` if you don't need it — `Default` is implemented for `()`.
     type Info: Default + Clone + Send + Sync + 'static;
 
     /// The complete, fixed set of agent IDs for this environment.
     ///
     /// Does not change between episodes or as agents terminate mid-episode.
+    /// Use `agents()` for the currently live set.
     fn possible_agents(&self) -> &[Self::AgentId];
 
     /// The agents currently active in this episode.
     ///
-    /// Starts equal to `possible_agents()` after `reset()`. Shrinks (never
-    /// grows) as agents terminate or are truncated. Empty when the episode
-    /// is over.
+    /// Starts equal to `possible_agents()` after `reset()`. Shrinks as agents
+    /// terminate or are truncated; never grows. Empty when the episode is over.
     fn agents(&self) -> &[Self::AgentId];
 
     /// Advance the environment by one step using joint actions.
     ///
     /// `actions` must contain exactly one entry per agent in `self.agents()`.
-    /// Returns one [`StepResult`] per active agent. After this call,
-    /// `self.agents()` no longer includes agents whose result was done.
+    /// After this call, agents whose result was done are removed from `agents()`.
     fn step(
         &mut self,
         actions: HashMap<Self::AgentId, Self::Action>,
     ) -> HashMap<Self::AgentId, StepResult<Self::Observation, Self::Info>>;
 
-    /// Reset the environment to an initial state.
+    /// Reset the environment to an initial state, starting a new episode.
     ///
-    /// Restores the full `possible_agents()` set as active and returns the
-    /// initial observation and info for each agent.
+    /// If `seed` is `Some(u64)`, the environment should use it to seed its
+    /// internal RNG for deterministic reproduction of episodes.
+    /// Returns the initial observation and info for every agent.
     fn reset(
         &mut self,
         seed: Option<u64>,
@@ -105,16 +126,15 @@ pub trait ParallelEnvironment {
 
     /// Sample a random action for the given agent.
     ///
-    /// The caller supplies `rng` so exploration randomness is seeded and
-    /// tracked independently from environment randomness.
+    /// The `rng` is caller-supplied so exploration randomness can be seeded
+    /// and tracked independently from environment randomness.
     fn sample_action(&self, agent: &Self::AgentId, rng: &mut impl Rng) -> Self::Action;
 
-    /// A global state observation for the full environment.
+    /// A global state observation of the full environment.
     ///
     /// Used by centralised-training / decentralised-execution algorithms
     /// (e.g. MADDPG, QMIX) that condition a centralised critic on the full
-    /// environment state while individual policies see only local observations.
-    ///
+    /// state while individual policies see only local observations.
     /// Returns `None` by default; override if your environment supports it.
     fn state(&self) -> Option<Self::Observation> {
         None
@@ -136,67 +156,78 @@ pub trait ParallelEnvironment {
     }
 }
 
-// ── AEC API ──────────────────────────────────────────────────────────────────
-
 /// A multi-agent environment with Agent Environment Cycle (turn-based) semantics.
 ///
-/// Mirrors the semantics of PettingZoo's [AEC API], adapted for Rust's type
-/// system and Bevy ECS compatibility.
+/// Mirrors the semantics of PettingZoo's AEC API, adapted for Rust's type
+/// system. Use this when agents act one at a time — board games, card games,
+/// or any domain where simultaneous action is not meaningful.
 ///
-/// [AEC API]: https://pettingzoo.farama.org/api/aec/
+/// # Design principles
 ///
-/// # Execution model
+/// - **Turn-based execution**: one agent acts per `step()` call.
+///   `agent_selection()` identifies whose turn it is. After each call,
+///   the selection advances to the next active agent.
 ///
-/// Agents act one at a time. Each call to `step()` advances the
-/// `agent_selection` to the next agent. The environment internally maintains
-/// the most recent reward, status, and info for each agent as persistent state,
-/// readable at any time via `agent_state()`.
+/// - **Persistent state**: the environment tracks each agent's most recent
+///   reward, status, and info as mutable state. Read it via `agent_state()`
+///   before deciding on an action. `last()` is a convenience that combines
+///   `observe()` and `agent_state()` for the current agent.
 ///
-/// # AEC loop pattern
+/// - **Cycling out terminated agents**: when `agent_state()` reports a done
+///   status for `agent_selection()`, pass `None` to `step()` to advance the
+///   turn without applying an action. The type signature makes this contract
+///   explicit — passing `Some(action)` for a done agent is undefined behaviour.
+///
+/// - **Bevy-compatible by design**: same `Send + Sync + 'static` bounds as
+///   [`ParallelEnvironment`]. The turn-based nature is inherently sequential,
+///   so ECS parallelisation applies less directly than with `ParallelEnvironment`.
+///
+/// - **No `render()`**: visualisation is bevy-gym's concern.
+///
+/// - **No `close()`**: implement `Drop` if your environment holds resources.
+///
+/// # Example
+///
+/// Typical AEC loop:
 ///
 /// ```rust,ignore
 /// env.reset(None);
 /// while !env.is_done() {
-///     let (obs, reward, status, info) = env.last();
+///     let (obs, _reward, status, _info) = env.last();
 ///     let action = if status.is_done() {
-///         None  // cycle terminated agent out without acting
+///         None  // cycle the terminated agent out
 ///     } else {
 ///         Some(policy.act(env.agent_selection(), &obs.unwrap()))
 ///     };
 ///     env.step(action);
 /// }
 /// ```
-///
-/// # Terminated agent handling
-///
-/// When `agent_state()` reports a done status for `agent_selection()`, pass
-/// `None` to `step()`. This cycles the agent out and advances the turn without
-/// applying an action. Passing `Some(action)` for a done agent is undefined
-/// behaviour.
-///
-/// # Bevy compatibility
-///
-/// Same `Send + Sync + 'static` bounds as [`ParallelEnvironment`]. The
-/// turn-based nature means this API is inherently sequential and does not
-/// benefit from ECS parallelism as directly as `ParallelEnvironment`, but
-/// it can still be used as a Bevy `Component`.
 pub trait AecEnvironment {
     /// Identifier for each agent. Same semantics as [`ParallelEnvironment::AgentId`].
     type AgentId: Eq + Hash + Clone + Send + Sync + 'static;
 
-    /// Observation type, shared across all agents.
+    /// The observation type produced by `observe()`.
+    ///
+    /// `Send + Sync + 'static` are required for Bevy ECS compatibility.
     type Observation: Clone + Send + Sync + 'static;
 
-    /// Action type, shared across all agents.
+    /// The action type consumed by `step()`.
     type Action: Clone + Send + Sync + 'static;
 
-    /// Auxiliary info type, shared across all agents.
+    /// Auxiliary information returned alongside observations.
+    ///
+    /// Use `()` if you don't need it — `Default` is implemented for `()`.
     type Info: Default + Clone + Send + Sync + 'static;
 
     /// The complete, fixed set of agent IDs for this environment.
+    ///
+    /// Does not change between episodes or as agents terminate mid-episode.
     fn possible_agents(&self) -> &[Self::AgentId];
 
     /// The agents currently active in this episode.
+    ///
+    /// Starts equal to `possible_agents()` after `reset()`. Shrinks as agents
+    /// terminate or are truncated; never grows. Empty when the episode is over.
     fn agents(&self) -> &[Self::AgentId];
 
     /// The agent whose turn it currently is to act.
@@ -204,14 +235,16 @@ pub trait AecEnvironment {
 
     /// Execute the current agent's action and advance to the next agent.
     ///
-    /// Pass `None` when `agent_state(agent_selection())` is done, to cycle
-    /// the terminated or truncated agent out without applying an action.
+    /// Pass `None` when `agent_state(agent_selection())` reports a done status,
+    /// to cycle the agent out without applying an action. Pass `Some(action)`
+    /// otherwise.
     fn step(&mut self, action: Option<Self::Action>);
 
-    /// Reset the environment to an initial state.
+    /// Reset the environment to an initial state, starting a new episode.
     ///
     /// Unlike [`ParallelEnvironment::reset`], this returns nothing. Retrieve
     /// initial observations via `observe()` after calling `reset()`.
+    /// If `seed` is `Some(u64)`, it is used to seed the internal RNG.
     fn reset(&mut self, seed: Option<u64>);
 
     /// Retrieve the current observation for the given agent.
@@ -220,21 +253,24 @@ pub trait AecEnvironment {
     /// last observation is no longer valid.
     fn observe(&self, agent: &Self::AgentId) -> Option<Self::Observation>;
 
-    /// Retrieve the persistent (reward, status, info) state for the given agent.
+    /// Retrieve the persistent `(reward, status, info)` for the given agent.
     ///
-    /// This state is updated by `step()` and persists until the next time that
-    /// agent acts. It reflects what the agent received as a result of its last
+    /// This state is updated each time the agent acts and persists until its
+    /// next turn. It reflects what the agent received as a result of its last
     /// action.
     fn agent_state(&self, agent: &Self::AgentId) -> (f64, EpisodeStatus, Self::Info);
 
     /// Sample a random action for the given agent.
+    ///
+    /// The `rng` is caller-supplied so exploration randomness can be seeded
+    /// and tracked independently from environment randomness.
     fn sample_action(&self, agent: &Self::AgentId, rng: &mut impl Rng) -> Self::Action;
 
-    /// Convenience: returns the full state for the currently selected agent.
+    /// Returns the full state for the currently selected agent.
     ///
-    /// Equivalent to calling `observe(agent_selection())` and
+    /// Convenience wrapper around `observe(agent_selection())` and
     /// `agent_state(agent_selection())`. This is the idiomatic way to read the
-    /// current agent's situation before deciding on an action.
+    /// current agent's situation at the top of the AEC loop.
     fn last(&self) -> (Option<Self::Observation>, f64, EpisodeStatus, Self::Info) {
         let agent = self.agent_selection().clone();
         let obs = self.observe(&agent);
