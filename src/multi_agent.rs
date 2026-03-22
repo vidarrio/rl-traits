@@ -293,3 +293,134 @@ pub trait AecEnvironment {
         self.possible_agents().len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::episode::{EpisodeStatus, StepResult};
+
+    // ── ParallelEnvironment mock ─────────────────────────────────────────────
+
+    struct ParallelMock {
+        agents: &'static [usize],
+    }
+
+    impl ParallelEnvironment for ParallelMock {
+        type AgentId = usize;
+        type Observation = ();
+        type Action = ();
+        type Info = ();
+
+        fn possible_agents(&self) -> &[usize] { &[0, 1, 2] }
+        fn agents(&self) -> &[usize] { self.agents }
+
+        fn step(&mut self, _: HashMap<usize, ()>) -> HashMap<usize, StepResult<(), ()>> {
+            unimplemented!()
+        }
+        fn reset(&mut self, _: Option<u64>) -> HashMap<usize, ((), ())> {
+            unimplemented!()
+        }
+        fn sample_action(&self, _: &usize, _: &mut impl rand::Rng) {}
+    }
+
+    // ── AecEnvironment mock ──────────────────────────────────────────────────
+
+    struct AecMock {
+        agents: &'static [usize],
+        current: usize,
+    }
+
+    impl AecEnvironment for AecMock {
+        type AgentId = usize;
+        type Observation = i32;
+        type Action = ();
+        type Info = String;
+
+        fn possible_agents(&self) -> &[usize] { &[0, 1] }
+        fn agents(&self) -> &[usize] { self.agents }
+        fn agent_selection(&self) -> &usize { &self.current }
+
+        fn step(&mut self, _: Option<()>) { unimplemented!() }
+        fn reset(&mut self, _: Option<u64>) { unimplemented!() }
+
+        fn observe(&self, agent: &usize) -> Option<i32> {
+            if *agent == 0 { Some(99) } else { None }
+        }
+
+        fn agent_state(&self, agent: &usize) -> (f64, EpisodeStatus, String) {
+            match agent {
+                0 => (2.5, EpisodeStatus::Continuing, "alive".to_string()),
+                _ => (0.0, EpisodeStatus::Terminated, String::new()),
+            }
+        }
+
+        fn sample_action(&self, _: &usize, _: &mut impl rand::Rng) {}
+    }
+
+    // ── ParallelEnvironment ──────────────────────────────────────────────────
+
+    #[test]
+    fn parallel_is_done_when_agents_empty() {
+        assert!(ParallelMock { agents: &[] }.is_done());
+    }
+
+    #[test]
+    fn parallel_not_done_with_active_agents() {
+        assert!(!ParallelMock { agents: &[0, 1] }.is_done());
+    }
+
+    #[test]
+    fn parallel_num_agents_reflects_active_set() {
+        assert_eq!(ParallelMock { agents: &[0, 1] }.num_agents(), 2);
+    }
+
+    #[test]
+    fn parallel_max_num_agents_reflects_possible_set() {
+        // possible_agents is always [0, 1, 2] regardless of the active set
+        assert_eq!(ParallelMock { agents: &[0] }.max_num_agents(), 3);
+    }
+
+    #[test]
+    fn parallel_state_returns_none_by_default() {
+        assert!(ParallelMock { agents: &[0] }.state().is_none());
+    }
+
+    // ── AecEnvironment ───────────────────────────────────────────────────────
+
+    #[test]
+    fn aec_is_done_when_agents_empty() {
+        assert!(AecMock { agents: &[], current: 0 }.is_done());
+    }
+
+    #[test]
+    fn aec_not_done_with_active_agents() {
+        assert!(!AecMock { agents: &[0, 1], current: 0 }.is_done());
+    }
+
+    #[test]
+    fn aec_num_and_max_num_agents() {
+        let env = AecMock { agents: &[0], current: 0 };
+        assert_eq!(env.num_agents(), 1);
+        assert_eq!(env.max_num_agents(), 2); // possible_agents is [0, 1]
+    }
+
+    #[test]
+    fn aec_last_composes_observe_and_agent_state_for_current_agent() {
+        // Agent 0 is selected — has observation Some(99) and is Continuing.
+        let env = AecMock { agents: &[0, 1], current: 0 };
+        let (obs, reward, status, info) = env.last();
+        assert_eq!(obs, Some(99));
+        assert_eq!(reward, 2.5);
+        assert_eq!(status, EpisodeStatus::Continuing);
+        assert_eq!(info, "alive");
+    }
+
+    #[test]
+    fn aec_last_returns_none_obs_for_terminated_agent() {
+        // Agent 1 is selected — terminated, so observe() returns None.
+        let env = AecMock { agents: &[1], current: 1 };
+        let (obs, _reward, status, _info) = env.last();
+        assert_eq!(obs, None);
+        assert!(status.is_terminal());
+    }
+}
