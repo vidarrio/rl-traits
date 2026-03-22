@@ -55,6 +55,7 @@ pub mod buffer;
 pub mod environment;
 pub mod episode;
 pub mod experience;
+pub mod multi_agent;
 pub mod policy;
 pub mod wrappers;
 
@@ -63,5 +64,6 @@ pub use buffer::ReplayBuffer;
 pub use environment::Environment;
 pub use episode::{EpisodeStatus, StepResult};
 pub use experience::Experience;
+pub use multi_agent::{AecEnvironment, ParallelEnvironment};
 pub use policy::{Policy, StochasticPolicy};
 pub use wrappers::{TimeLimit, Wrapper};
