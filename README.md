@@ -115,14 +115,23 @@ env.step(action);
 Bevy `Entity` satisfies all `AgentId` bounds directly, so agents can be ECS
 entities without any extra indirection.
 
-## Reference example
+## Reference examples
 
-`examples/cartpole.rs` implements CartPole-v1 against these traits. It serves
-as a validation of the API ergonomics and a reference for how to implement
-`Environment`. Run it with:
+`examples/cartpole.rs` implements CartPole-v1 against `Environment`. It serves
+as a validation of the single-agent API ergonomics and a reference for how to
+implement `Environment`. Run it with:
 
 ```
 cargo run --example cartpole
+```
+
+`examples/pursuit.rs` implements a two-predator cooperative tracking task
+against `ParallelEnvironment`. Two predators on a 1-D grid cooperate to catch
+a randomly moving prey, demonstrating per-agent observations, joint actions,
+and the `Terminated` / `Truncated` distinction across agents. Run it with:
+
+```
+cargo run --example pursuit
 ```
 
 ## License
