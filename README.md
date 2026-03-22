@@ -1,5 +1,9 @@
 # rl-traits
 
+[![crates.io](https://img.shields.io/crates/v/rl-traits.svg)](https://crates.io/crates/rl-traits)
+[![docs.rs](https://docs.rs/rl-traits/badge.svg)](https://docs.rs/rl-traits)
+[![CI](https://github.com/vidarrio/rl-traits/actions/workflows/ci.yml/badge.svg)](https://github.com/vidarrio/rl-traits/actions/workflows/ci.yml)
+
 Core traits for reinforcement learning environments, policies, and agents.
 
 `rl-traits` defines the shared vocabulary for a Rust RL ecosystem. It is
