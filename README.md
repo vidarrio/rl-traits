@@ -134,6 +134,10 @@ and the `Terminated` / `Truncated` distinction across agents. Run it with:
 cargo run --example pursuit
 ```
 
+## Development
+
+This crate was developed with the assistance of AI coding tools (Claude by Anthropic).
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
