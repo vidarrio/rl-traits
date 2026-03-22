@@ -15,7 +15,7 @@ belong in the crates that depend on this one.
 | Crate | Role |
 |---|---|
 | **rl-traits** | Shared traits and types (this crate) |
-| `ember-rl` *(planned)* | Algorithm implementations (DQN, PPO, SAC) using Burn |
+| [`ember-rl`](https://crates.io/crates/ember-rl) | Algorithm implementations (DQN, PPO, SAC) using Burn |
 | `bevy-gym` *(planned)* | Bevy ECS plugin for visualising and parallelising environments |
 
 ## Design goals
