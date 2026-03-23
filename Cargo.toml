@@ -1,6 +1,6 @@
 [package]
 name = "rl-traits"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Core traits for reinforcement learning environments, policies, and agents"
 license = "MIT OR Apache-2.0"

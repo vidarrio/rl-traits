@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rand::Rng;
 
 use crate::episode::StepResult;
@@ -88,4 +90,13 @@ pub trait Environment {
     /// The `rng` is caller-supplied so exploration randomness can be seeded
     /// and tracked independently from environment randomness.
     fn sample_action(&self, rng: &mut impl Rng) -> Self::Action;
+
+    /// Per-episode scalar metrics reported at episode end.
+    ///
+    /// Override this to expose environment-specific statistics (e.g. collisions,
+    /// tiles explored, distance travelled). The default returns an empty map.
+    /// These are merged into training records alongside algorithm-level extras.
+    fn episode_extras(&self) -> HashMap<String, f64> {
+        HashMap::new()
+    }
 }
